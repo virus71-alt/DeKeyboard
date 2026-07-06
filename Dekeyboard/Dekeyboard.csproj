@@ -1,0 +1,44 @@
+﻿<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+
+    <!-- WPF for the (headless) app + WinForms for the NotifyIcon tray support -->
+    <UseWPF>true</UseWPF>
+    <UseWindowsForms>true</UseWindowsForms>
+
+    <AssemblyName>Dekeyboard</AssemblyName>
+    <RootNamespace>Dekeyboard</RootNamespace>
+    <Version>1.0.0</Version>
+    <Company>Dekeyboard</Company>
+    <Product>Dekeyboard</Product>
+
+    <!-- Ask for elevation: device (un)installation requires administrator rights -->
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+
+    <!-- EXE / window icon shown in Explorer, taskbar and Alt+Tab -->
+    <ApplicationIcon>Dekeyboard.ico</ApplicationIcon>
+
+    <!-- Single-file publish friendliness -->
+    <SatelliteResourceLanguages>en</SatelliteResourceLanguages>
+    <Platforms>AnyCPU;x64</Platforms>
+    <RuntimeIdentifiers>win-x64;win-arm64</RuntimeIdentifiers>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- appsettings.json is only a template; the live config lives in %APPDATA% -->
+    <None Update="appsettings.json">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+
+    <!-- Embed the tray icon so it loads even from a single-file EXE.
+         LogicalName must match TrayIconResource in TrayService.cs. -->
+    <EmbeddedResource Include="Dekeyboard.ico">
+      <LogicalName>Dekeyboard.tray.ico</LogicalName>
+    </EmbeddedResource>
+  </ItemGroup>
+
+</Project>

@@ -1,0 +1,51 @@
+## .NET / Visual Studio ignore
+bin/
+obj/
+publish/
+*.user
+*.suo
+.vs/
+.vscode/
+*.userprefs
+
+## Build results
+[Dd]ebug/
+[Rr]elease/
+x64/
+x86/
+[Aa][Rr][Mm]/
+[Aa][Rr][Mm]64/
+[Bb]in/
+[Oo]bj/
+
+## Rider
+.idea/
+
+## OS files
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/
+
+## Local runtime data (created at %APPDATA%, never in-repo, but ignore if copied here)
+## NOTE: log.txt / config.json can contain your device instance IDs (hardware info).
+log.txt
+config.json
+
+## Secrets / credentials — never commit these
+.env
+.env.*
+*.pfx
+*.p12
+*.snk
+*.key
+*.pem
+*.cer
+*.crt
+secrets.json
+appsettings.*.local.json
+appsettings.Development.json
+
+## Publish profiles (can embed deploy credentials / passwords)
+*.pubxml
+*.pubxml.user
+PublishProfiles/
