@@ -101,7 +101,13 @@ internal static class NativeMethods
     // ---- Low-level keyboard hook (global hotkeys) ---------------------------------
     public const int WH_KEYBOARD_LL = 13;
     public const int WM_KEYDOWN     = 0x0100;
+    public const int WM_KEYUP       = 0x0101;
     public const int WM_SYSKEYDOWN  = 0x0104;
+    public const int WM_SYSKEYUP    = 0x0105;
+
+    // KBDLLHOOKSTRUCT.flags bit: event was injected by SendInput (on-screen / touch
+    // keyboard, remote desktop, automation). Real hardware keys do NOT set this.
+    public const uint LLKHF_INJECTED = 0x00000010;
 
     public const int VK_SHIFT   = 0x10;
     public const int VK_CONTROL = 0x11;
@@ -138,11 +144,75 @@ internal static class NativeMethods
     [DllImport("kernel32.dll", CharSet = CharSet.Unicode)]
     public static extern IntPtr GetModuleHandle(string? lpModuleName);
 
+    // ---- Convertible / tablet posture ---------------------------------------------
+    // SM_CONVERTIBLESLATEMODE: 0 = slate/tablet (folded) OR device doesn't support it,
+    // non-zero = laptop mode. Because 0 is ambiguous, callers must act on TRANSITIONS
+    // only, never on the startup value.
+    public const int SM_CONVERTIBLESLATEMODE = 0x2003;
+
+    [DllImport("user32.dll")]
+    public static extern int GetSystemMetrics(int nIndex);
+
+    // Display orientation fallback: when the convertible-slate signal isn't reported,
+    // we detect the fold via the screen auto-rotating (EnumDisplaySettings ->
+    // dmDisplayOrientation). 0 = DMDO_DEFAULT (landscape), 1/2/3 = rotated.
+    public const int ENUM_CURRENT_SETTINGS = -1;
+
+    [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
+    public struct DEVMODE
+    {
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmDeviceName;
+        public ushort dmSpecVersion;
+        public ushort dmDriverVersion;
+        public ushort dmSize;
+        public ushort dmDriverExtra;
+        public uint dmFields;
+        public int dmPositionX;
+        public int dmPositionY;
+        public uint dmDisplayOrientation;
+        public uint dmDisplayFixedOutput;
+        public short dmColor;
+        public short dmDuplex;
+        public short dmYResolution;
+        public short dmTTOption;
+        public short dmCollate;
+        [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 32)] public string dmFormName;
+        public ushort dmLogPixels;
+        public uint dmBitsPerPel;
+        public uint dmPelsWidth;
+        public uint dmPelsHeight;
+        public uint dmDisplayFlags;
+        public uint dmDisplayFrequency;
+        public uint dmICMMethod;
+        public uint dmICMIntent;
+        public uint dmMediaType;
+        public uint dmDitherType;
+        public uint dmReserved1;
+        public uint dmReserved2;
+        public uint dmPanningWidth;
+        public uint dmPanningHeight;
+    }
+
+    [DllImport("user32.dll", CharSet = CharSet.Unicode)]
+    [return: MarshalAs(UnmanagedType.Bool)]
+    public static extern bool EnumDisplaySettings(string? deviceName, int modeNum, ref DEVMODE devMode);
+
     // ---- CfgMgr32: walk the device tree to find a device's real bus ---------------
     // Used to tell an INTERNAL HID keyboard (parent = ACPI/I2C) apart from an
     // EXTERNAL USB HID keyboard (an ancestor enumerator is USB / Bluetooth).
     public const int CR_SUCCESS = 0;
     public const int CM_LOCATE_DEVNODE_NORMAL = 0;
+
+    // Device-node status flag: the device can be disabled at all. When this is clear,
+    // SetupDiCallClassInstaller(DICS_DISABLE) will always fail (Device Manager greys
+    // out "Disable device"), so we must fall back to input blocking.
+    public const uint DN_DISABLEABLE = 0x00002000;
+    public const uint DN_HAS_PROBLEM = 0x00000400;
+    public const uint CM_PROB_DISABLED = 22; // device is disabled
+
+    [DllImport("cfgmgr32.dll")]
+    public static extern int CM_Get_DevNode_Status(
+        out uint pulStatus, out uint pulProblemNumber, uint dnDevInst, int ulFlags);
 
     [DllImport("cfgmgr32.dll", CharSet = CharSet.Unicode)]
     public static extern int CM_Locate_DevNodeW(out uint pdnDevInst, string pDeviceID, int ulFlags);

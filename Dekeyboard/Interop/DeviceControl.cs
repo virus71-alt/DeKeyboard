@@ -114,6 +114,32 @@ public static class DeviceControl
         return false;
     }
 
+    /// <summary>
+    /// Whether the device node reports the DN_DISABLEABLE capability. If it does not,
+    /// SetupDiCallClassInstaller(DICS_DISABLE) will always fail and we must fall back
+    /// to input blocking. Returns true when the status can't be read (let the caller try).
+    /// </summary>
+    public static bool IsDisableable(string instanceId)
+    {
+        if (string.IsNullOrEmpty(instanceId)) return true;
+        if (CM_Locate_DevNodeW(out uint node, instanceId, CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS)
+            return true;
+        if (CM_Get_DevNode_Status(out uint status, out _, node, 0) != CR_SUCCESS)
+            return true;
+        return (status & DN_DISABLEABLE) != 0;
+    }
+
+    /// <summary>True when the device node is currently in the "disabled" problem state.</summary>
+    public static bool IsCurrentlyDisabled(string instanceId)
+    {
+        if (string.IsNullOrEmpty(instanceId)) return false;
+        if (CM_Locate_DevNodeW(out uint node, instanceId, CM_LOCATE_DEVNODE_NORMAL) != CR_SUCCESS)
+            return false;
+        if (CM_Get_DevNode_Status(out uint status, out uint problem, node, 0) != CR_SUCCESS)
+            return false;
+        return (status & DN_HAS_PROBLEM) != 0 && problem == CM_PROB_DISABLED;
+    }
+
     private static string GetDeviceId(uint node)
     {
         if (CM_Get_Device_ID_Size(out int len, node, 0) != CR_SUCCESS || len <= 0) return string.Empty;
@@ -137,10 +163,16 @@ public static class DeviceControl
         };
 
         if (!SetupDiSetClassInstallParams(set, ref did, ref pcp, Marshal.SizeOf<SP_PROPCHANGE_PARAMS>()))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "SetupDiSetClassInstallParams failed");
+        {
+            int e = Marshal.GetLastWin32Error();
+            throw new Win32Exception(e, $"SetupDiSetClassInstallParams failed (Win32 {e})");
+        }
 
         if (!SetupDiCallClassInstaller(DIF_PROPERTYCHANGE, set, ref did))
-            throw new Win32Exception(Marshal.GetLastWin32Error(), "SetupDiCallClassInstaller failed");
+        {
+            int e = Marshal.GetLastWin32Error();
+            throw new Win32Exception(e, $"SetupDiCallClassInstaller failed (Win32 {e})");
+        }
     }
 
     private static string GetInstanceId(IntPtr set, ref SP_DEVINFO_DATA did)

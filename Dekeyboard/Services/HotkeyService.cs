@@ -28,6 +28,14 @@ public sealed class HotkeyService : IDisposable
     public event Action? DisablePressed;
     public event Action? EnablePressed;
 
+    /// <summary>
+    /// Input-block fallback: when true, real (non-injected) hardware keystrokes are
+    /// swallowed inside this same hook. Used when the keyboard device node cannot be
+    /// disabled. Injected keys (on-screen / touch keyboard) and our own hotkeys still
+    /// pass so the user can re-enable via Win+6 or the tray.
+    /// </summary>
+    public volatile bool BlockPhysicalInput;
+
     public HotkeyService(AppConfig config)
     {
         _config = config;
@@ -60,20 +68,35 @@ public sealed class HotkeyService : IDisposable
 
     private IntPtr HookCallback(int nCode, IntPtr wParam, IntPtr lParam)
     {
-        if (nCode >= 0 && (wParam == WM_KEYDOWN || wParam == WM_SYSKEYDOWN))
+        if (nCode >= 0)
         {
-            var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
-            int vk = (int)data.vkCode;
+            int msg = (int)wParam;
+            bool isKeyEvent = msg is WM_KEYDOWN or WM_SYSKEYDOWN or WM_KEYUP or WM_SYSKEYUP;
 
-            if (vk == _disableVk && ModifiersMatch(_config.DisableHotkey))
+            if (isKeyEvent)
             {
-                Fire(DisablePressed);
-                if (_config.SuppressHotkeyKeystroke) return (IntPtr)1; // swallow
-            }
-            else if (vk == _enableVk && ModifiersMatch(_config.EnableHotkey))
-            {
-                Fire(EnablePressed);
-                if (_config.SuppressHotkeyKeystroke) return (IntPtr)1; // swallow
+                var data = Marshal.PtrToStructure<KBDLLHOOKSTRUCT>(lParam);
+                int vk = (int)data.vkCode;
+                bool isDown = msg is WM_KEYDOWN or WM_SYSKEYDOWN;
+                bool injected = (data.flags & LLKHF_INJECTED) != 0;
+
+                // Hotkeys fire on key-down only.
+                if (isDown && vk == _disableVk && ModifiersMatch(_config.DisableHotkey))
+                {
+                    Fire(DisablePressed);
+                    if (_config.SuppressHotkeyKeystroke) return (IntPtr)1; // swallow
+                }
+                else if (isDown && vk == _enableVk && ModifiersMatch(_config.EnableHotkey))
+                {
+                    Fire(EnablePressed);
+                    if (_config.SuppressHotkeyKeystroke) return (IntPtr)1; // swallow
+                }
+                // Input-block fallback: swallow real hardware keys (down AND up so no
+                // half-pressed state leaks). Injected keys (touch/on-screen) pass through.
+                else if (BlockPhysicalInput && !injected)
+                {
+                    return (IntPtr)1;
+                }
             }
         }
 

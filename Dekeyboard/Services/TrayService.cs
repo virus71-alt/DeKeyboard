@@ -24,11 +24,15 @@ public sealed class TrayService : IDisposable
     private readonly Icon _appIcon;
     private readonly ToolStripMenuItem _statusItem;
     private readonly ToolStripMenuItem _toggleItem;
+    private readonly ToolStripMenuItem _autoFoldItem;
     private readonly ToolStripMenuItem _soundItem;
     private readonly ToolStripMenuItem _touchpadItem;
     private readonly ToolStripMenuItem _startupItem;
 
     public event Action? QuitRequested;
+
+    /// <summary>Raised when the user toggles "Auto-lock in tablet mode" (true = on).</summary>
+    public event Action<bool>? AutoFoldChanged;
 
     public TrayService(AppConfig config, DeviceService device)
     {
@@ -38,6 +42,8 @@ public sealed class TrayService : IDisposable
 
         _statusItem = new ToolStripMenuItem("Status: keyboard enabled") { Enabled = false };
         _toggleItem = new ToolStripMenuItem("Disable laptop keyboard", null, (_, _) => ToggleFromMenu());
+        _autoFoldItem = new ToolStripMenuItem("Auto-lock in tablet mode", null, (_, _) => ToggleAutoFold())
+            { Checked = _config.AutoFoldDetection, CheckOnClick = true };
         _soundItem = new ToolStripMenuItem("Play sound on toggle", null, (_, _) => ToggleSound())
             { Checked = _config.PlaySound, CheckOnClick = true };
         _touchpadItem = new ToolStripMenuItem("Also disable touchpad", null, (_, _) => ToggleTouchpad())
@@ -50,6 +56,7 @@ public sealed class TrayService : IDisposable
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(_toggleItem);
         menu.Items.Add(new ToolStripSeparator());
+        menu.Items.Add(_autoFoldItem);
         menu.Items.Add(_soundItem);
         menu.Items.Add(_touchpadItem);
         menu.Items.Add(_startupItem);
@@ -112,9 +119,13 @@ public sealed class TrayService : IDisposable
         if (_config.PlaySound)
             (nowDisabled ? SystemSounds.Hand : SystemSounds.Asterisk).Play();
 
+        string detail = nowDisabled && _device.CurrentMethod == DeviceService.DisableMethod.InputBlock
+            ? " (input-block mode)"
+            : string.Empty;
+
         Notify(
             title: "Dekeyboard",
-            message: nowDisabled ? "Laptop keyboard disabled" : "Laptop keyboard enabled",
+            message: (nowDisabled ? "Laptop keyboard disabled" : "Laptop keyboard enabled") + detail,
             icon: ToolTipIcon.Info);
     }
 
@@ -149,6 +160,13 @@ public sealed class TrayService : IDisposable
         {
             Logger.Error("Failed to show notification.", ex);
         }
+    }
+
+    private void ToggleAutoFold()
+    {
+        _config.AutoFoldDetection = _autoFoldItem.Checked;
+        _config.Save();
+        AutoFoldChanged?.Invoke(_autoFoldItem.Checked);
     }
 
     private void ToggleSound()

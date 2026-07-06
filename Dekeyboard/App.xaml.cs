@@ -14,6 +14,7 @@ public partial class App : System.Windows.Application
     private DeviceService _device = null!;
     private HotkeyService _hotkeys = null!;
     private TrayService _tray = null!;
+    private FoldDetectionService _fold = null!;
 
     protected override void OnStartup(StartupEventArgs e)
     {
@@ -61,15 +62,26 @@ public partial class App : System.Windows.Application
         _tray = new TrayService(_config, _device);
         _hotkeys = new HotkeyService(_config);
 
+        // Let DeviceService flip input blocking without referencing HotkeyService directly.
+        _device.InputBlockController = block => _hotkeys.BlockPhysicalInput = block;
+
+        // SAFETY: always boot with a working keyboard. Undo any persisted disable that
+        // an earlier session / older build may have left behind. This is what prevents
+        // the "keyboard dead after reboot" lock-out.
+        _device.EnsureInternalKeyboardEnabled();
+
         _tray.QuitRequested += () => Shutdown();
 
         _hotkeys.DisablePressed += HandleDisable;
         _hotkeys.EnablePressed += HandleEnable;
         _hotkeys.Install();
 
-        // Log the identified device up front so the user can verify detection.
-        try { _device.ResolveInternalKeyboard(); }
-        catch (Exception ex) { Logger.Error("Initial keyboard detection failed.", ex); }
+        // Auto-lock the keyboard when folded to tablet mode, unlock in laptop mode.
+        _fold = new FoldDetectionService();
+        _fold.FoldedToTablet += () => { Logger.Info("Auto: folded to tablet -> lock keyboard."); HandleDisable(); };
+        _fold.UnfoldedToLaptop += () => { Logger.Info("Auto: back to laptop -> unlock keyboard."); HandleEnable(); };
+        _tray.AutoFoldChanged += on => { if (on) _fold.Start(); else _fold.Stop(); };
+        if (_config.AutoFoldDetection) _fold.Start();
 
         Logger.Info("Dekeyboard ready (running in tray).");
     }
@@ -117,6 +129,7 @@ public partial class App : System.Windows.Application
         }
         catch (Exception ex) { Logger.Error("Failed to re-enable keyboard on exit.", ex); }
 
+        _fold?.Dispose();
         _hotkeys?.Dispose();
         _tray?.Dispose();
         _singleInstance?.Dispose();

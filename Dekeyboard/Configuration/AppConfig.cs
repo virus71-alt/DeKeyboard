@@ -41,6 +41,29 @@ public sealed class AppConfig
     public bool DisableTouchpadWithKeyboard { get; set; } = false;
 
     /// <summary>
+    /// When the internal keyboard cannot be disabled at the device level (common on
+    /// convertibles where "Disable device" is greyed out), fall back to blocking
+    /// hardware keystrokes with a low-level hook. Note: this fallback blocks ALL
+    /// physical keyboards (it can't isolate one device at the input layer); on-screen
+    /// and touch keyboards keep working.
+    /// </summary>
+    public bool AllowInputBlockFallback { get; set; } = true;
+
+    /// <summary>
+    /// SAFETY DEFAULT. Use the non-persistent input-block method instead of disabling
+    /// the device node. A device-node disable survives a reboot and can leave you
+    /// locked out; input blocking dies with the app, so a restart always restores the
+    /// keyboard. Keep this true unless you specifically want a hard device disable.
+    /// </summary>
+    public bool PreferInputBlock { get; set; } = true;
+
+    /// <summary>
+    /// Automatically lock the keyboard when the device is folded into tablet (360°)
+    /// mode and unlock it when returned to laptop mode. Uses SM_CONVERTIBLESLATEMODE.
+    /// </summary>
+    public bool AutoFoldDetection { get; set; } = true;
+
+    /// <summary>
     /// Swallow the key event once handled so Win+5/Win+6 don't also trigger the
     /// shell's "launch 5th taskbar app" behavior.
     /// </summary>

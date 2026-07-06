@@ -47,6 +47,8 @@ A tiny, silent Windows tray app that turns **only** the internal keyboard (and o
 |---|---|
 | ✅ | **`Win`+`5`** disables **only** the built-in keyboard |
 | ✅ | **`Win`+`6`** re-enables it |
+| 🔒 | **Auto-lock when folded to tablet (360°)**, auto-unlock in laptop mode |
+| 🛡️ | **Fail-safe:** always boots with the keyboard **ON** — a disable can never survive a restart |
 | ✅ | USB & Bluetooth keyboards are **never** touched (incl. USB-HID, via device-tree check) |
 | ✅ | Auto-detects the internal keyboard (no manual setup) |
 | ✅ | Runs silently in the **system tray** with a custom icon |
@@ -109,9 +111,11 @@ flowchart LR
     C -->|"classify by bus"| D{Internal?}
     D -->|"ACPI / PNP0303 / internal HID"| E["Internal (toggle)"]
     D -->|"USB / Bluetooth / USB-HID"| F["External (ignored)"]
-    E --> G[DeviceControl]
-    G -->|"SetupDiSetClassInstallParams<br/>+ SetupDiCallClassInstaller"| H[(Device node<br/>enabled / disabled)]
+    E --> K{Device<br/>disableable?}
+    K -->|yes| G["SetupAPI: disable device node"]
+    K -->|"no (convertible)"| L["Input-block: hook swallows<br/>physical keystrokes"]
     G --> I[TrayService]
+    L --> I
     I --> J["Toast + sound + status"]
 ```
 
@@ -141,6 +145,67 @@ SetupDiCallClassInstaller(DIF_PROPERTYCHANGE, ...)
 This is a **first-party Microsoft API**, is fully **reversible**, does **not** uninstall the driver, and needs **no reboot**. (The same thing is possible with the shipped `pnputil /disable-device "<InstanceId>"` — see the [FAQ](#faq).)
 
 </details>
+
+---
+
+## Auto-lock in tablet mode + fail-safe
+
+Two features make this safe to leave running for someone else (e.g. a kid using the laptop):
+
+**Auto-lock on fold.** With `AutoFoldDetection` on (default), Dekeyboard locks the
+keyboard when you fold to **360° / tablet** and unlocks it back in **laptop mode**. No
+hotkey needed; `Win`+`5` / `Win`+`6` still work as manual overrides.
+
+It reads the **physical device pose from the accelerometer**
+(`Windows.Devices.Sensors.SimpleOrientationSensor`, the same sensor that rotates your
+screen). Laptop mode reads `NotRotated`; folding to tablet gives `Faceup` (laid flat) or
+a rotated pose — a **stable** signal that stays put while folded. A short **debounce**
+means a momentary rotation during the fold motion can't flip-flop the keyboard.
+
+> Machines without an accelerometer projection fall back to **display orientation**
+> (`EnumDisplaySettings`). Note the display value snaps back to landscape after Windows
+> finishes auto-rotating, so the accelerometer path is strongly preferred.
+>
+> The firmware fold bit (`SM_CONVERTIBLESLATEMODE`) is deliberately *not* used — many
+> convertibles (e.g. the CX5) never report it, which is the same reason Windows doesn't
+> auto-disable the keyboard on those devices in the first place.
+>
+> **Verify on your device:** fold it and watch `%APPDATA%\Dekeyboard\log.txt` for a
+> `Posture settled -> TABLET` line (and `-> laptop` when you unfold). The startup line
+> also tells you which signal is active (`via accelerometer` or
+> `via display-orientation fallback`). If neither ever fires, use `Win`+`5`.
+
+**Fail-safe: you can't get locked out.**
+- Disabling uses the **non-persistent input-block** method by default (`PreferInputBlock`),
+  which dies with the app — so a **reboot always brings the keyboard back**.
+- On every startup Dekeyboard **re-enables** the internal keyboard if a previous session
+  (or an older build) left it disabled at the device level. Boot = keyboard on, always.
+- If the app is closed or crashes, the keyboard is instantly restored.
+
+> **Recovery, just in case:** your convertible has a touchscreen, so you can always
+> re-enable via touch — long-press **Start → Device Manager → Keyboards →** long-press
+> **Standard PS/2 Keyboard → Enable device** — or plug in a USB keyboard (never blocked).
+
+---
+
+## Two ways to turn the keyboard off
+
+Dekeyboard picks the method automatically, per device:
+
+| Method | When it's used | What it does | Caveat |
+|---|---|---|---|
+| **Device node** (preferred) | The device reports `DN_DISABLEABLE` | Disables the device node via SetupAPI — exactly like Device Manager | Only works if the device *can* be disabled |
+| **Input block** (fallback) | The device is **not** disableable, or SetupAPI refuses | A low-level hook swallows physical keystrokes | Blocks **all** physical keyboards while active; on-screen / touch keyboards keep working |
+
+> [!IMPORTANT]
+> Many convertibles — including the **iLife ZEDNote CX5** and the machine this was tested on — mark the built-in keyboard as **non-disableable** (in Device Manager, right-click → *Disable device* is greyed out). On those, `SetupDiCallClassInstaller` fails, so Dekeyboard automatically switches to **input-block mode**. The notification will read *"Laptop keyboard disabled (input-block mode)"*.
+>
+> **In input-block mode:**
+> - Every **physical** keyboard is blocked (the hook can't isolate one device at the input layer), but the **on-screen / touch keyboard still works** — exactly what you want in tablet mode.
+> - You can always re-enable with **`Win`+`6`** (checked before the block) **or** by tapping the **tray icon** with touch.
+> - If the app exits or crashes, the hook is removed and the keyboard is instantly restored.
+>
+> Set `"AllowInputBlockFallback": false` in `config.json` to disable this behavior (then a non-disableable keyboard just reports an error instead).
 
 ---
 
@@ -201,6 +266,9 @@ Config lives at **`%APPDATA%\Dekeyboard\config.json`** (created on first run). E
 
   "PlaySound": true,                    // sound on toggle
   "DisableTouchpadWithKeyboard": false, // also disable the touchpad
+  "AllowInputBlockFallback": true,      // block keystrokes when the device can't be disabled
+  "PreferInputBlock": true,             // SAFETY: use non-persistent blocking, never a hard device disable
+  "AutoFoldDetection": true,            // auto lock/unlock when folding to tablet mode
   "SuppressHotkeyKeystroke": true,      // swallow the key so the taskbar ignores Win+5/6
 
   "KeyboardInstanceId": null,           // set to pin a specific keyboard
@@ -213,6 +281,9 @@ Config lives at **`%APPDATA%\Dekeyboard\config.json`** (created on first run). E
 | `DisableHotkey` / `EnableHotkey` | object | `Win+5` / `Win+6` | Modifier flags + a `Key` (`"5"`, `"K"`, `"F9"`, …) |
 | `PlaySound` | bool | `true` | Play a system sound on each toggle |
 | `DisableTouchpadWithKeyboard` | bool | `false` | Disable the internal touchpad alongside the keyboard |
+| `AllowInputBlockFallback` | bool | `true` | If the keyboard can't be device-disabled, block hardware keystrokes instead ([details](#two-ways-to-turn-the-keyboard-off)) |
+| `PreferInputBlock` | bool | `true` | **Safety.** Always use the non-persistent input-block method so a disable can't survive a reboot. Set `false` for a hard device-node disable |
+| `AutoFoldDetection` | bool | `true` | Auto lock/unlock the keyboard when folding to / from tablet mode |
 | `SuppressHotkeyKeystroke` | bool | `true` | Prevent the hotkey from also reaching other apps |
 | `KeyboardInstanceId` | string? | `null` | Force a specific keyboard device instance id |
 | `TouchpadInstanceId` | string? | `null` | Force a specific touchpad device instance id |
@@ -231,6 +302,7 @@ Right-click the tray icon (double-click = quick toggle):
 +---------------------------------+
 | Disable laptop keyboard         |   <- manual toggle
 +---------------------------------+
+| [x] Auto-lock in tablet mode    |   <- fold detection
 | [x] Play sound on toggle        |
 | [ ] Also disable touchpad       |
 | [x] Start with Windows          |
@@ -278,7 +350,7 @@ dotnet publish Dekeyboard -c Release -r win-x64 `
   -p:PublishSingleFile=true --self-contained false
 ```
 
-Output: `Dekeyboard\bin\Release\net8.0-windows\win-x64\publish\Dekeyboard.exe`
+Output: `Dekeyboard\bin\Release\net8.0-windows10.0.19041.0\win-x64\publish\Dekeyboard.exe`
 On ARM convertibles, use `-r win-arm64`.
 
 ---
@@ -304,8 +376,9 @@ Dekeyboard/                         (repo root)
     │   └── DeviceControl.cs        # enumerate, device-tree walk, enable/disable
     └── Services/
         ├── Logger.cs               # thread-safe file logger
-        ├── DeviceService.cs        # identifies the internal keyboard/touchpad
-        ├── HotkeyService.cs        # global hotkeys via WH_KEYBOARD_LL
+        ├── DeviceService.cs        # identifies + toggles keyboard/touchpad, safety re-enable
+        ├── FoldDetectionService.cs # auto lock/unlock on tablet-mode fold
+        ├── HotkeyService.cs        # global hotkeys + input-block via WH_KEYBOARD_LL
         ├── StartupService.cs       # "start with Windows" via elevated Scheduled Task
         └── TrayService.cs          # NotifyIcon, menu, notifications, sound, icon
 ```
@@ -338,9 +411,15 @@ It shouldn't — auto-start uses a *"Run with highest privileges"* Scheduled Tas
 </details>
 
 <details>
+<summary><b>"Could not disable keyboard: SetupDiCallClassInstaller failed"</b></summary>
+
+This means Windows won't disable that keyboard's device node — the device is **non-disableable** (common on convertibles; *Disable device* is greyed out in Device Manager). Dekeyboard normally handles this automatically by switching to [input-block mode](#two-ways-to-turn-the-keyboard-off). If you see this error, `AllowInputBlockFallback` is `false` in your `config.json` — set it to `true` and restart.
+</details>
+
+<details>
 <summary><b>Keyboard still types after being "disabled"</b></summary>
 
-A few I²C/HID internal keyboards keep sending input even when the device node is disabled (a firmware quirk). If your machine does this, open an issue — a low-level *input-blocking* mode (filter at the hook instead of disabling the device) can be added as a fallback.
+If you're in **device-node** mode and a few I²C/HID keyboards keep sending input (a firmware quirk), set `"AllowInputBlockFallback": true` and, if needed, pin the keyboard so it uses input blocking. In **input-block** mode all physical keys are already suppressed at the OS input layer.
 </details>
 
 ---
@@ -354,7 +433,7 @@ No. It flips the device node's enabled/disabled state — the same reversible ac
 
 <details>
 <summary><b>Will it disable my USB or Bluetooth keyboard?</b></summary>
-No. Devices whose enumerator is <code>USB</code> or <code>BTH…</code> — <i>or</i> whose device-tree parent is on the USB/Bluetooth bus (USB-HID keyboards) — are excluded.
+In <b>device-node</b> mode, no — only the identified internal keyboard is disabled; USB / Bluetooth (incl. USB-HID) devices are excluded. In <b>input-block</b> fallback mode, the hook can't isolate a single device, so <b>all</b> physical keyboards are blocked while active (on-screen / touch keyboards still work). That mode only kicks in when the internal keyboard can't be device-disabled — the exact situation where you're using touch anyway.
 </details>
 
 <details>
@@ -383,7 +462,8 @@ On normal exit it auto-re-enables the keyboard. If it's force-killed while disab
 
 ## Verified test output
 
-Real first-run detection on a Windows 11 laptop (from `log.txt`):
+Real disable/enable cycle on a Windows 11 laptop (from `log.txt`), showing the
+automatic fallback when the internal keyboard is non-disableable:
 
 ```log
 [INFO ] === Dekeyboard starting ===
@@ -393,9 +473,14 @@ Real first-run detection on a Windows 11 laptop (from `log.txt`):
 [INFO ]     - internal | Standard PS/2 Keyboard | enum=ACPI | id=ACPI\1025171E\4&33EE29D&0
 [INFO ] Selected internal keyboard: Standard PS/2 Keyboard [ACPI\1025171E\4&33EE29D&0]
 [INFO ] Dekeyboard ready (running in tray).
+... Win+5 ...
+[INFO ] Keyboard 'ACPI\1025171E\4&33EE29D&0' disableable=False.
+[INFO ] Keyboard held off via input-block fallback (hardware keys suppressed).
+... Win+6 ...
+[INFO ] Input-block fallback lifted; hardware keys restored.
 ```
 
-✔️ Builds clean (`0 warnings, 0 errors`) · ✔️ elevates via UAC · ✔️ installs the global hook · ✔️ the device-tree walk correctly tags the USB-HID keyboard **EXTERNAL** and picks the **internal** PS/2 keyboard.
+✔️ Builds clean (`0 warnings, 0 errors`) · ✔️ elevates via UAC · ✔️ installs the global hook · ✔️ device-tree walk tags the USB-HID keyboard **EXTERNAL** and picks the **internal** PS/2 keyboard · ✔️ detects the non-disableable device and **falls back to input-block mode**, with `Win`+`6` still able to re-enable.
 
 ---
 
